@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>澳門自由行手帳</title>
+    
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#fff1f2">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- React & Firebase -->
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "lucide-react": "https://esm.sh/lucide-react@0.263.1",
+            "firebase/app": "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js",
+            "firebase/auth": "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js",
+            "firebase/firestore": "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js"
+        }
+    }
+    </script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        body { overscroll-behavior-y: none; background-color: #fff1f2; }
+        input[type="time"]::-webkit-calendar-picker-indicator { background: none; display:none; }
+    </style>
+</head>
+<body class="bg-rose-50 text-slate-800 h-full w-full">
+    <!-- 載入/錯誤提示區 -->
+    <div id="loading-screen" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#fff1f2; display:flex; flex-direction:column; justify-content:center; align-items:center; z-index:9999;">
+        <div style="font-size:24px; font-weight:bold; color:#e11d48; margin-bottom:10px;">澳門自由行手帳</div>
+        <div style="color:#881337;">正在啟動中...</div>
+        <div id="error-msg" style="margin-top:20px; color:red; font-size:12px; max-width:80%; word-break:break-all; text-align:center;"></div>
+    </div>
+
+    <div id="root"></div>
+
+    <script>
+        window.onerror = function(msg, url, line) {
+            const errorDiv = document.getElementById('error-msg');
+            if (errorDiv) {
+                errorDiv.innerHTML = `⚠️ 發生錯誤：<br>${msg}<br>Line: ${line}`;
+                document.getElementById('loading-screen').style.display = 'flex';
+            }
+            return false;
+        };
+    </script>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            MapPin, Train, ShoppingBag, Calculator, CheckSquare, 
+            Plus, Trash2, Calendar, ArrowRightLeft, X, Loader2, 
+            AlertCircle, RefreshCw, Camera, Image as ImageIcon, BookOpen, Edit3,
+            Maximize2, Lock, ChevronUp, ChevronDown, User, Users, Cloud,
+            Link as LinkIcon, ExternalLink
+        } from 'lucide-react';
+        import { initializeApp } from 'firebase/app';
+        import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+        import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+
+        // 移除載入畫面
+        setTimeout(() => {
+            const loader = document.getElementById('loading-screen');
+            if(loader) loader.style.display = 'none';
+        }, 1500);
+
+        // ==========================================
+        //  ✅ 你的專屬金鑰 (已填入)
+        // ==========================================
+        const firebaseConfig = {
+          apiKey: "AIzaSyA1OrQDCohwvQntBCZT7LpuPjVlRAPDkxw",
+          authDomain: "macau-trip-2026.firebaseapp.com",
+          projectId: "macau-trip-2026",
+          storageBucket: "macau-trip-2026.firebasestorage.app",
+          messagingSenderId: "1060547026482",
+          appId: "1:1060547026482:web:6a10bcd78c3824f3d4e62b"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        
+        // ⚠️ App ID (確保與舊資料一致)
+        const appId = 'macau-trip-2026-v8-final';  
+
+        // --- 核心邏輯 ---
+
+        const processImage = (file) => {
+            return new Promise((resolve, reject) => {
+                if (!file.type.match('image.*')) { reject("請上傳圖片"); return; }
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.src = event.target.result;
+                    img.onload = () => {
+                        const maxWidth = 800;
+                        const scaleSize = maxWidth / img.width;
+                        const newWidth = maxWidth < img.width ? maxWidth : img.width;
+                        const newHeight = maxWidth < img.width ? img.height * scaleSize : img.height;
+                        const canvas = document.createElement('canvas');
+                        canvas.width = newWidth;
+                        canvas.height = newHeight;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, newWidth, newHeight);
+                        resolve(canvas.toDataURL('image/jpeg', 0.6));
+                    };
+                };
+                reader.onerror = (error) => reject("讀取錯誤");
+            });
+        };
+
+        const AutoResizeTextarea = ({ value, onChange, placeholder, className, minRows = 1 }) => {
+            const textareaRef = useRef(null);
+            useEffect(() => {
+                if (textareaRef.current) {
+                    textareaRef.current.style.height = 'auto';
+                    textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+                }
+            }, [value]);
+            return <textarea ref={textareaRef} value={value || ''} onChange={onChange} placeholder={placeholder} className={`${className} overflow-hidden resize-none`} rows={minRows} />;
+        };
+
+        const getSafeLink = (url) => {
+            if (!url) return '#';
+            let safeUrl = url.trim();
+            if (!safeUrl.match(/^https?:\/\//i)) safeUrl = 'https://' + safeUrl;
+            return safeUrl;
+        };
+
+        // CheckList 元件 (只定義這一次！)
+        const CheckList = ({ title, listName, icon, items, inputValue, onInputChange, onAddItem, onToggleItem, onDeleteItem }) => (
+            <div className="bg-white rounded-3xl p-5 shadow-sm border border-rose-100">
+                <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2 mb-3">{icon} {title}</h3>
+                <div className="flex gap-2 mb-4">
+                    <input placeholder="新增項目..." value={inputValue} onChange={(e) => onInputChange(listName, e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onAddItem(listName)} className="flex-1 bg-slate-50 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-100" />
+                    <button onClick={() => onAddItem(listName)} className="bg-rose-400 text-white p-2 rounded-xl"><Plus size={18}/></button>
+                </div>
+                <div className="space-y-2">
+                    {items.map(item => (
+                        <div key={item.id} className="flex items-center gap-3 group">
+                            <button onClick={() => onToggleItem(listName, item.id)} className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${item.checked ? 'bg-rose-400 border-rose-400 text-white' : 'border-slate-300'}`}><CheckSquare size={14} /></button>
+                            <span className={`flex-1 ${item.checked ? 'text-slate-300 line-through' : 'text-slate-700'}`}>{item.text}</span>
+                            <button onClick={() => onDeleteItem(listName, item.id)} className="text-slate-200 hover:text-red-400"><X size={16} /></button>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+
+        const DEFAULT_PUBLIC_DATA = { days: [{ id: 1, date: 'Day 1', items: [{ id: 'i1', type: 'sight', startTime: '18:00', endTime: '20:00', title: '行程範例', note: '編輯我...', link: '' }] }], infos: [] };
+        const DEFAULT_PRIVATE_DATA = { checklist: [{ id: 'c1', text: '護照', checked: false }], shopping: [], expenses: [], exchangeRate: 4.05, diary: [] };
+
+        const ConfirmModal = ({ isOpen, message, onConfirm, onCancel }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in">
+                    <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-xs transform scale-100">
+                        <h3 className="text-lg font-bold text-slate-800 mb-2">確認</h3>
+                        <p className="text-slate-500 mb-6">{message}</p>
+                        <div className="flex gap-3">
+                            <button onClick={onCancel} className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold">取消</button>
+                            <button onClick={onConfirm} className="flex-1 py-3 bg-rose-500 text-white rounded-xl font-bold shadow-lg">確定</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const ImageViewer = ({ src, onClose }) => {
+            if (!src) return null;
+            return (
+                <div className="fixed inset-0 z-[70] bg-black/95 flex items-center justify-center p-2 animate-in fade-in" onClick={onClose}>
+                    <button onClick={onClose} className="absolute top-4 right-4 text-white/70 p-2"><X size={32} /></button>
+                    <img src={src} className="max-w-full max-h-[90vh] object-contain rounded-lg" onClick={(e) => e.stopPropagation()} />
+                </div>
+            );
+        };
+
+        const SetupScreen = ({ onJoin, loading, error }) => {
+            const [inputCode, setInputCode] = useState('');
+            return (
+                <div className="min-h-screen bg-rose-50 flex flex-col items-center justify-center p-6 font-sans text-slate-800">
+                    <div className="w-full max-w-sm bg-white p-8 rounded-3xl shadow-xl space-y-6 border border-rose-100">
+                        <div className="text-center space-y-2">
+                            <div className="w-16 h-16 bg-rose-200 rounded-full mx-auto flex items-center justify-center mb-4"><MapPin className="text-rose-500 w-8 h-8" /></div>
+                            <h1 className="text-2xl font-bold">澳門自由行手帳</h1>
+                            <p className="text-sm text-slate-500">輸入代碼與朋友同步行程</p>
+                        </div>
+                        {error && <div className="bg-red-50 text-red-500 p-3 rounded-xl text-sm flex items-center gap-2"><AlertCircle size={16} /> {error}</div>}
+                        <input type="text" placeholder="輸入代碼 (例如: 2026go)" value={inputCode} onChange={(e) => setInputCode(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-slate-50 border-2 border-rose-100 focus:border-rose-300 focus:outline-none text-center font-bold text-slate-700" />
+                        <button onClick={() => inputCode && onJoin(inputCode)} disabled={loading || !inputCode} className="w-full py-4 bg-rose-400 hover:bg-rose-500 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2">
+                            {loading ? <Loader2 className="animate-spin" /> : <ArrowRightLeft />} 開始規劃
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        function App() {
+            const [user, setUser] = useState(null);
+            const [tripId, setTripId] = useState(() => { try { return localStorage.getItem('macau_trip_id'); } catch(e){ return null; }});
+            const [publicData, setPublicData] = useState(null);
+            const [privateData, setPrivateData] = useState(null);
+            const [activeTab, setActiveTab] = useState('itinerary');
+            const [isLoading, setIsLoading] = useState(false);
+            const [error, setError] = useState(null);
+            const [confirmState, setConfirmState] = useState({ isOpen: false, message: '', onConfirm: null });
+            const [previewImage, setPreviewImage] = useState(null);
+            const [toastMsg, setToastMsg] = useState('');
+
+            const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 3000); };
+            const requestConfirm = (message, action) => setConfirmState({ isOpen: true, message, onConfirm: () => { action(); setConfirmState({ isOpen: false, message: '', onConfirm: null }); }});
+
+            useEffect(() => {
+                const initAuth = async () => { try { await signInAnonymously(auth); } catch (err) { setError("登入失敗"); } };
+                initAuth();
+                return onAuthStateChanged(auth, setUser);
+            }, []);
+
+            useEffect(() => {
+                if (!user || !tripId) return;
+                setIsLoading(true);
+                const publicRef = doc(db, 'artifacts', appId, 'public', 'data', 'trips', tripId);
+                const privateRef = doc(db, 'artifacts', appId, 'users', user.uid, 'trips', tripId);
+
+                const unsubPublic = onSnapshot(publicRef, (snap) => {
+                    if (snap.exists()) setPublicData(snap.data());
+                    else setPublicData(DEFAULT_PUBLIC_DATA);
+                    setIsLoading(false);
+                }, () => showToast("無法同步共用行程"));
+
+                const unsubPrivate = onSnapshot(privateRef, (snap) => {
+                    if (snap.exists()) setPrivateData(snap.data());
+                    else setPrivateData(DEFAULT_PRIVATE_DATA);
+                });
+                return () => { unsubPublic(); unsubPrivate(); };
+            }, [user, tripId]);
+
+            const updatePublicData = async (newData) => {
+                setPublicData(newData);
+                try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'trips', tripId), newData, { merge: true }); } catch (err) { 
+                    if(err.toString().includes("exceeds")) showToast("圖片太大"); else showToast("儲存失敗"); 
+                }
+            };
+            const updatePrivateData = async (newData) => {
+                setPrivateData(newData);
+                try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'trips', tripId), newData, { merge: true }); } catch (err) { showToast("儲存失敗"); }
+            };
+
+            const handleJoin = (id) => {
+                const cleanId = id.trim().replace(/[^a-zA-Z0-9-_]/g, ''); 
+                if(!cleanId) return setError("代碼無效");
+                localStorage.setItem('macau_trip_id', cleanId);
+                setTripId(cleanId);
+            };
+
+            const handleLogout = () => {
+                requestConfirm("確定登出？", () => { localStorage.removeItem('macau_trip_id'); setTripId(null); });
+            };
+
+            if (!tripId) return <SetupScreen onJoin={handleJoin} loading={!user} error={error} />;
+
+            if (!publicData || !privateData) {
+                return (
+                    <div className="h-screen flex flex-col items-center justify-center bg-rose-50 text-rose-400 gap-3">
+                        <Loader2 className="animate-spin w-8 h-8" />
+                        <span className="font-medium animate-pulse">正在搜尋雲端行程...</span>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="bg-slate-50 min-h-screen font-sans pb-24 sm:pb-0 sm:pl-20 relative text-slate-800">
+                    {toastMsg && <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[80] bg-slate-800 text-white px-4 py-2 rounded-full text-sm font-bold shadow-xl animate-in slide-in-from-top-4 fade-in">{toastMsg}</div>}
+                    <ConfirmModal isOpen={confirmState.isOpen} message={confirmState.message} onConfirm={confirmState.onConfirm} onCancel={() => setConfirmState({ ...confirmState, isOpen: false })} />
+                    <ImageViewer src={previewImage} onClose={() => setPreviewImage(null)} />
+
+                    <div className="sticky top-0 z-30 bg-white/90 backdrop-blur-md px-5 py-4 flex justify-between items-center shadow-sm border-b border-rose-100 sm:hidden">
+                        <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                            {activeTab === 'itinerary' && '行程'}{activeTab === 'expenses' && '記帳'}{activeTab === 'shopping' && '清單'}{activeTab === 'info' && '資訊'}{activeTab === 'diary' && '日記'}
+                            {isLoading ? <Loader2 size={14} className="animate-spin text-slate-400" /> : <Cloud size={14} className="text-emerald-400" />}
+                        </h2>
+                        <button onClick={handleLogout} className="px-3 py-1 bg-rose-100 text-rose-600 rounded-full text-xs font-bold">#{tripId}</button>
+                    </div>
+
+                    <div className="max-w-2xl mx-auto min-h-screen">
+                        {activeTab === 'itinerary' && <ItineraryView data={publicData} updateData={updatePublicData} confirm={requestConfirm} />}
+                        {activeTab === 'info' && <InfoView data={publicData} updateData={updatePublicData} confirm={requestConfirm} preview={setPreviewImage} toast={showToast} />}
+                        {activeTab === 'expenses' && <ExpensesView data={privateData} updateData={updatePrivateData} confirm={requestConfirm} toast={showToast} />}
+                        {activeTab === 'shopping' && <ShoppingView data={privateData} updateData={updatePrivateData} confirm={requestConfirm} />}
+                        {activeTab === 'diary' && <DiaryView data={privateData} updateData={updatePrivateData} confirm={requestConfirm} preview={setPreviewImage} toast={showToast} />}
+                    </div>
+
+                    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-rose-100 px-2 py-3 flex justify-around items-center text-[10px] font-medium z-40 sm:flex-col sm:top-0 sm:right-auto sm:w-20 sm:h-screen sm:border-t-0 sm:border-r sm:justify-start sm:gap-8 sm:pt-8 sm:text-xs">
+                        <NavButton active={activeTab === 'itinerary'} onClick={() => setActiveTab('itinerary')} icon={<Users size={20} />} label="共用行程" />
+                        <NavButton active={activeTab === 'info'} onClick={() => setActiveTab('info')} icon={<Train size={20} />} label="共用資訊" />
+                        <div className="w-px h-6 bg-slate-200 sm:w-full sm:h-px sm:my-2"></div>
+                        <NavButton active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses')} icon={<Calculator size={20} />} label="個人記帳" />
+                        <NavButton active={activeTab === 'shopping'} onClick={() => setActiveTab('shopping')} icon={<ShoppingBag size={20} />} label="個人清單" />
+                        <NavButton active={activeTab === 'diary'} onClick={() => setActiveTab('diary')} icon={<BookOpen size={20} />} label="私密日記" />
+                    </nav>
+                </div>
+            );
+        }
+
+        const NavButton = ({ active, onClick, icon, label }) => (
+            <button onClick={onClick} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${active ? 'text-rose-500 bg-rose-50' : 'text-slate-400'}`}>
+                {icon} <span>{label}</span>
+            </button>
+        );
+
+        // --- 子元件 ---
+
+        const ItineraryView = ({ data, updateData, confirm }) => {
+            const days = data?.days || [];
+            const addDay = () => updateData({ ...data, days: [...days, { id: Date.now(), date: `Day ${days.length + 1}`, items: [] }] });
+            const addItem = (dayId) => {
+                const newDays = days.map(d => d.id === dayId ? { ...d, items: [...(d.items||[]), { id: Date.now().toString(), type: 'sight', startTime: '18:00', endTime: '20:00', title: '', note: '', link: '' }] } : d);
+                updateData({ ...data, days: newDays });
+            };
+            const deleteItem = (dayId, itemId) => confirm("刪除行程？", () => {
+                const newDays = days.map(d => d.id === dayId ? { ...d, items: (d.items||[]).filter(i => i.id !== itemId) } : d);
+                updateData({ ...data, days: newDays });
+            });
+            const updateItem = (dayId, itemId, field, val) => {
+                const newDays = days.map(d => d.id === dayId ? { ...d, items: (d.items||[]).map(i => i.id === itemId ? { ...i, [field]: val } : i) } : d);
+                updateData({ ...data, days: newDays });
+            };
+            const moveItem = (dayId, index, direction) => {
+                const dayIndex = days.findIndex(d => d.id === dayId);
+                if(dayIndex === -1) return;
+                const day = days[dayIndex];
+                const newItems = [...(day.items||[])];
+                const targetIndex = index + direction;
+                if (targetIndex < 0 || targetIndex >= newItems.length) return;
+                [newItems[index], newItems[targetIndex]] = [newItems[targetIndex], newItems[index]];
+                const newDays = [...days];
+                newDays[dayIndex] = { ...day, items: newItems };
+                updateData({ ...data, days: newDays });
+            };
+
+            const getTypeColor = (t) => t === 'transport' ? 'bg-blue-300' : t === 'other' ? 'bg-orange-300' : 'bg-rose-300';
+            const getSelectStyle = (t) => t === 'transport' ? 'bg-blue-50 text-blue-500' : t === 'other' ? 'bg-orange-50 text-orange-500' : 'bg-rose-50 text-rose-500';
+
+            return (
+                <div className="p-4 space-y-6">
+                    <div className="bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 mb-2"><Users size={16}/> 這是共用區域</div>
+                    {days.map((day) => (
+                        <div key={day.id}>
+                            <div className="sticky top-14 sm:top-0 z-20 py-3 bg-slate-50/95 backdrop-blur flex justify-between items-center">
+                                <input className="text-xl font-bold bg-transparent text-slate-800 w-full focus:outline-none" value={day.date} onChange={(e) => {
+                                    const newDays = days.map(d => d.id === day.id ? {...d, date: e.target.value} : d);
+                                    updateData({...data, days: newDays});
+                                }} />
+                                <button onClick={() => addItem(day.id)} className="bg-rose-400 text-white p-2 rounded-full shadow hover:bg-rose-500"><Plus size={18}/></button>
+                            </div>
+                            <div className="space-y-3 pl-4 border-l-2 border-rose-100 ml-2">
+                                {(day.items||[]).map((item, index) => (
+                                    <div key={item.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 relative group">
+                                        <div className={`absolute -left-[21px] top-6 w-3 h-3 rounded-full border-2 border-slate-50 ${getTypeColor(item.type)}`} />
+                                        <div className="flex justify-between items-start mb-3 flex-wrap gap-2">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <div className="flex items-center bg-slate-50 rounded-lg px-2 py-1.5 border border-slate-100">
+                                                    <input type="text" value={item.startTime||''} placeholder="00:00" onFocus={(e)=>e.target.type='time'} onBlur={(e)=>e.target.type='text'} onChange={(e)=>updateItem(day.id, item.id, 'startTime', e.target.value)} className="text-sm font-mono text-rose-500 bg-transparent focus:outline-none w-[50px] text-center p-0" />
+                                                    <span className="text-slate-300 mx-1">~</span>
+                                                    <input type="text" value={item.endTime||''} placeholder="00:00" onFocus={(e)=>e.target.type='time'} onBlur={(e)=>e.target.type='text'} onChange={(e)=>updateItem(day.id, item.id, 'endTime', e.target.value)} className="text-sm font-mono text-rose-500 bg-transparent focus:outline-none w-[50px] text-center p-0" />
+                                                </div>
+                                                <select value={item.type} onChange={(e) => updateItem(day.id, item.id, 'type', e.target.value)} className={`text-xs rounded px-2 py-2 font-bold ${getSelectStyle(item.type)}`}>
+                                                    <option value="sight">景點</option><option value="transport">交通</option><option value="other">其他</option>
+                                                </select>
+                                            </div>
+                                            <button onClick={() => deleteItem(day.id, item.id)} className="text-slate-300 hover:text-red-400 p-1"><Trash2 size={16} /></button>
+                                        </div>
+                                        <AutoResizeTextarea className="w-full font-bold text-lg text-slate-800 mb-1 focus:outline-none placeholder-slate-300 bg-transparent leading-snug" placeholder="行程名稱 (可換行)" value={item.title} onChange={(e) => updateItem(day.id, item.id, 'title', e.target.value)} />
+                                        <AutoResizeTextarea className="w-full text-sm text-slate-500 focus:outline-none placeholder-slate-300 bg-transparent" placeholder="備註..." value={item.note} onChange={(e) => updateItem(day.id, item.id, 'note', e.target.value)} />
+                                        <div className="flex items-center gap-2 mt-2 bg-slate-50 rounded-xl px-3 py-2 border border-slate-100 focus-within:border-rose-200 transition-colors">
+                                            <LinkIcon size={16} className="text-slate-400 flex-shrink-0" />
+                                            <input type="url" className="w-full bg-transparent text-xs text-slate-600 focus:outline-none placeholder-slate-300" placeholder="貼上連結 (例如 Google Maps...)" value={item.link || ''} onChange={(e) => updateItem(day.id, item.id, 'link', e.target.value)} />
+                                            {item.link && (<a href={getSafeLink(item.link)} target="_blank" rel="noopener noreferrer" className="text-rose-400 hover:text-rose-600 p-2"><ExternalLink size={18} /></a>)}
+                                        </div>
+                                        <div className="absolute bottom-2 right-2 flex flex-col gap-1 opacity-30 group-hover:opacity-100 transition-opacity">
+                                            <button onClick={() => moveItem(day.id, index, -1)} disabled={index === 0} className="p-1 hover:bg-slate-100 rounded text-slate-400 disabled:opacity-0"><ChevronUp size={16}/></button>
+                                            <button onClick={() => moveItem(day.id, index, 1)} disabled={index === (day.items||[]).length - 1} className="p-1 hover:bg-slate-100 rounded text-slate-400 disabled:opacity-0"><ChevronDown size={16}/></button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                    <button onClick={addDay} className="w-full py-3 border-2 border-dashed border-rose-200 text-rose-400 rounded-2xl font-bold">+ 新增一天</button>
+                    <div className="h-12" />
+                </div>
+            );
+        };
+
+        const ShoppingView = ({ data, updateData, confirm }) => {
+            const [inputs, setInputs] = useState({ checklist: '', shopping: '' });
+            const handleInputChange = (listName, val) => setInputs(prev => ({ ...prev, [listName]: val }));
+            const addItem = (listName) => {
+                if (!inputs[listName]) return;
+                const currentList = data?.[listName] || [];
+                updateData({ ...data, [listName]: [...currentList, { id: Date.now(), text: inputs[listName], checked: false }] });
+                setInputs(prev => ({ ...prev, [listName]: '' }));
+            };
+            const toggleItem = (listName, itemId) => updateData({...data, [listName]: (data?.[listName]||[]).map(i => i.id === itemId ? {...i, checked: !i.checked} : i)});
+            const deleteItem = (listName, id) => confirm("刪除？", () => updateData({ ...data, [listName]: (data?.[listName]||[]).filter(i => i.id !== id) }));
+
+            return (
+                <div className="p-4 space-y-6">
+                    <div className="bg-emerald-50 text-emerald-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 mb-2"><User size={16}/> 這是私有區域</div>
+                    <CheckList title="行前準備" listName="checklist" icon={<CheckSquare className="text-rose-400" />} items={data?.checklist || []} inputValue={inputs.checklist} onInputChange={handleInputChange} onAddItem={addItem} onToggleItem={toggleItem} onDeleteItem={deleteItem} />
+                    <CheckList title="購物清單" listName="shopping" icon={<ShoppingBag className="text-rose-400" />} items={data?.shopping || []} inputValue={inputs.shopping} onInputChange={handleInputChange} onAddItem={addItem} onToggleItem={toggleItem} onDeleteItem={deleteItem} />
+                </div>
+            );
+        };
+
+        const InfoView = ({ data, updateData, confirm, preview, toast }) => {
+            const infos = data?.infos || [];
+            const addInfo = () => updateData({ ...data, infos: [{ id: Date.now(), title: '新資訊', content: '', image: null }, ...infos] });
+            const updateInfo = (id, field, val) => updateData({ ...data, infos: infos.map(i => i.id === id ? { ...i, [field]: val } : i) });
+            const deleteInfo = (id) => confirm("刪除？", () => updateData({ ...data, infos: infos.filter(i => i.id !== id) }));
+            const handleImage = async (id, e) => {
+                const file = e.target.files[0];
+                if (file) { try { const base64 = await processImage(file); updateInfo(id, 'image', base64); } catch (error) { toast(error.toString()); } }
+            };
+            return (
+                <div className="p-4 space-y-4">
+                    <div className="flex justify-between items-center px-2"><h3 className="font-bold text-slate-700">交通 & 資訊 (共用)</h3><button onClick={addInfo} className="bg-rose-400 text-white px-3 py-1.5 rounded-full text-sm font-bold shadow flex items-center gap-1"><Plus size={16}/> 新增</button></div>
+                    <div className="space-y-4 pb-20">
+                        {infos.map(info => (
+                            <div key={info.id} className="bg-white p-4 rounded-3xl shadow-sm border border-rose-100">
+                                <div className="flex justify-between items-start mb-2"><input className="font-bold text-lg text-slate-800 bg-transparent focus:outline-none w-full" value={info.title} onChange={(e) => updateInfo(info.id, 'title', e.target.value)} placeholder="標題" /><button onClick={() => deleteInfo(info.id)} className="text-slate-300 hover:text-red-400"><Trash2 size={16}/></button></div>
+                                <textarea className="w-full text-sm text-slate-600 bg-slate-50 p-3 rounded-xl focus:outline-none resize-none mb-3" rows={3} value={info.content} onChange={(e) => updateInfo(info.id, 'content', e.target.value)} placeholder="輸入詳細資訊..." />
+                                {info.image ? (<div className="relative mb-2 group cursor-zoom-in" onClick={() => preview(info.image)}><img src={info.image} className="w-full h-40 object-cover rounded-xl" /><button onClick={(e) => { e.stopPropagation(); updateInfo(info.id, 'image', null); }} className="absolute top-2 right-2 bg-black/50 text-white p-1 rounded-full"><X size={14}/></button></div>) : (<label className="flex items-center justify-center gap-2 w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 cursor-pointer hover:bg-slate-50"><Camera size={18} /> <span className="text-xs">添加照片</span><input type="file" className="hidden" accept="image/*" onChange={(e) => handleImage(info.id, e)} /></label>)}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const ExpensesView = ({ data, updateData, confirm, toast }) => {
+            const [amount, setAmount] = useState('');
+            const [desc, setDesc] = useState('');
+            const [currency, setCurrency] = useState('MOP'); 
+            const [fetching, setFetching] = useState(false);
+            const expenses = data?.expenses || [];
+            const fetchRate = async () => {
+                setFetching(true);
+                try {
+                    const res = await fetch(`https://open.er-api.com/v6/latest/MOP?t=${Date.now()}`);
+                    const json = await res.json();
+                    if (json && json.rates && json.rates.TWD) {
+                        updateData({ ...data, exchangeRate: json.rates.TWD, rateUpdatedAt: new Date().toISOString() });
+                        toast(`匯率已更新：${json.rates.TWD.toFixed(3)}`);
+                    }
+                } catch (e) { toast("更新失敗"); } finally { setFetching(false); }
+            };
+            const addExpense = () => {
+                if (!amount || !desc) return;
+                const rate = data.exchangeRate || 4.0;
+                const costMOP = currency === 'MOP' ? parseFloat(amount) : parseFloat(amount) / rate;
+                updateData({ ...data, expenses: [{ id: Date.now(), desc, costMOP, date: new Date().toISOString() }, ...expenses] });
+                setAmount(''); setDesc('');
+            };
+            const removeExpense = (id) => confirm("刪除？", () => updateData({ ...data, expenses: expenses.filter(e => e.id !== id) }));
+            const totalMOP = expenses.reduce((sum, item) => sum + item.costMOP, 0);
+
+            return (
+                <div className="p-4 space-y-5">
+                    <div className="bg-emerald-50 text-emerald-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 mb-2"><User size={16}/> 這是私有區域</div>
+                    <div className="bg-rose-500 text-white p-5 rounded-3xl shadow-lg shadow-rose-200">
+                        <div className="flex justify-between items-center mb-4"><h3 className="font-bold flex items-center gap-2"><Calculator size={18}/> 記帳</h3><div className="flex items-center gap-2 bg-white/20 p-1.5 rounded-lg"><div className="flex flex-col items-end leading-none"><div className="flex items-center text-xs opacity-80 gap-1"><Lock size={10} /> 1 MOP = </div><div className="font-mono font-bold text-sm">{data.exchangeRate?.toFixed(2)} TWD</div></div><button onClick={fetchRate} disabled={fetching} className={`p-1.5 bg-white/20 rounded hover:bg-white/30 ${fetching ? 'animate-spin' : ''}`}><RefreshCw size={14} /></button></div></div>
+                        <div className="space-y-2"><input type="text" placeholder="買了什麼？" value={desc} onChange={(e) => setDesc(e.target.value)} className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white placeholder-rose-100 focus:outline-none" /><div className="flex gap-2"><div className="flex-1 relative"><input type="number" placeholder="0" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full bg-white text-rose-500 font-bold text-xl rounded-xl pl-4 pr-16 py-3 focus:outline-none" /><button onClick={() => setCurrency(currency === 'MOP' ? 'TWD' : 'MOP')} className="absolute right-2 top-2 bottom-2 px-2 bg-rose-100 text-rose-600 rounded-lg text-xs font-bold flex items-center">{currency}</button></div><button onClick={addExpense} className="bg-slate-800 text-white px-6 rounded-xl font-bold shadow-lg">記</button></div></div>
+                    </div>
+                    <div className="flex gap-4"><div className="flex-1 bg-white p-4 rounded-2xl shadow-sm border border-slate-100 text-center"><div className="text-xs text-slate-400">總支出 (MOP)</div><div className="text-xl font-bold text-slate-800">${totalMOP.toFixed(1)}</div></div><div className="flex-1 bg-white p-4 rounded-2xl shadow-sm border border-slate-100 text-center"><div className="text-xs text-slate-400">約台幣 (TWD)</div><div className="text-xl font-bold text-rose-500">${(totalMOP * (data.exchangeRate || 4)).toFixed(0)}</div></div></div>
+                    <div className="space-y-3 pb-20">{expenses.map(item => (<div key={item.id} className="bg-white p-3 rounded-2xl flex justify-between items-center shadow-sm border border-slate-50"><div><div className="font-medium text-slate-800">{item.desc}</div><div className="text-[10px] text-slate-400">{new Date(item.date).toLocaleDateString()}</div></div><div className="flex items-center gap-3"><div className="text-right"><div className="font-bold text-slate-700">{item.costMOP.toFixed(1)}</div><div className="text-[10px] text-rose-400">≈ ${(item.costMOP * data.exchangeRate).toFixed(0)}</div></div><button onClick={() => removeExpense(item.id)} className="text-slate-200 hover:text-red-400"><Trash2 size={16} /></button></div></div>))}</div>
+                </div>
+            );
+        };
+
+        const DiaryView = ({ data, updateData, confirm, preview, toast }) => {
+            const diary = data?.diary || [];
+            const addEntry = () => updateData({ ...data, diary: [{ id: Date.now(), date: new Date().toISOString().split('T')[0], mood: 'happy', content: '', image: null }, ...diary] });
+            const updateEntry = (id, field, val) => updateData({ ...data, diary: diary.map(e => e.id === id ? { ...e, [field]: val } : e) });
+            const deleteEntry = (id) => confirm("刪除這篇日記？", () => updateData({ ...data, diary: diary.filter(e => e.id !== id) }));
+            const handleImage = async (id, e) => {
+                const file = e.target.files[0];
+                if (file) { try { const base64 = await processImage(file); updateEntry(id, 'image', base64); } catch (error) { toast(error.toString()); } }
+            };
+            return (
+                <div className="p-4 space-y-4">
+                    <div className="bg-emerald-50 text-emerald-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 mb-2"><User size={16}/> 這是私有區域</div>
+                    <button onClick={addEntry} className="w-full py-3 bg-white border border-rose-200 text-rose-500 rounded-2xl shadow-sm font-bold flex items-center justify-center gap-2 hover:bg-rose-50"><Edit3 size={18} /> 寫日記</button>
+                    <div className="space-y-6 pb-20">
+                        {diary.map(entry => (
+                            <div key={entry.id} className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 relative">
+                                <div className="flex justify-between items-center mb-3"><input type="date" value={entry.date} onChange={(e) => updateEntry(entry.id, 'date', e.target.value)} className="text-sm font-bold text-slate-500 bg-transparent focus:outline-none" /><div className="flex items-center gap-2"><select value={entry.mood} onChange={(e) => updateEntry(entry.id, 'mood', e.target.value)} className="bg-rose-50 rounded-lg text-xs px-2 py-1 border-none focus:ring-0"><option value="happy">😊 開心</option><option value="tired">😫 累了</option><option value="excited">🤩 興奮</option><option value="chill">☕ 悠閒</option></select><button onClick={() => deleteEntry(entry.id)} className="text-slate-300 hover:text-red-400"><Trash2 size={16}/></button></div></div>
+                                {entry.image && (<div className="relative mb-4 group cursor-zoom-in" onClick={() => preview(entry.image)}><img src={entry.image} alt="memories" className="w-full h-48 object-cover rounded-2xl shadow-sm" /><button onClick={(e) => {e.stopPropagation(); updateEntry(entry.id, 'image', null);}} className="absolute top-2 right-2 bg-black/50 text-white p-1.5 rounded-full backdrop-blur-sm"><X size={14}/></button></div>)}
+                                <AutoResizeTextarea className="w-full bg-transparent text-slate-700 leading-relaxed focus:outline-none placeholder-slate-300" placeholder="今天發生了什麼有趣的事？..." value={entry.content} onChange={(e) => updateEntry(entry.id, 'content', e.target.value)} minRows={4} />
+                                {!entry.image && (<div className="mt-3 flex justify-end"><label className="text-rose-400 text-sm flex items-center gap-1 cursor-pointer hover:bg-rose-50 px-3 py-1.5 rounded-lg transition-colors"><ImageIcon size={16} /> 加照片<input type="file" className="hidden" accept="image/*" onChange={(e) => handleImage(entry.id, e)} /></label></div>)}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+
+
